@@ -18,169 +18,121 @@
 
 // ==================================================
 
-// как работает код:
-// открытие страницы https://oauth.vk.com/authorize?client_id=51815396&display=page&redirect_uri=http://127.0.0.1:5500/19-20/19.html&scope=offline&response_type=token
-// ведет пользователя на авторизацию через VK и последующий редирект на http://127.0.0.1:5500/19-20/19.html
-// После авторизации, а адресной строке пользователю будетт выдан token, с помощью которого
-// после загрузке скрипта, функция fetchPosts сделает запрос на получение данных со стены указанного сообщества
-const container = document.querySelector('.container');
-let maxSpaceLocalStorage = 0;
 
-const calculateSpaceLocalStorage = () => {
-  let value = 'a';
-  localStorage.clear();
 
-  while (true) {
-    try {
-      localStorage.setItem('', value);
-      value += value;
-    } catch {
-      break
-    }
-  }
+let posts = [];
+let count = 20;
+let localStorageMaxSize;
 
-  localStorage.clear();
-  return Math.floor((value.length / 2) * 2);
-}
+const widget = document.querySelector(".widget");
 
-// устанавливаем значение максильного размера хранилища
-maxSpaceLocalStorage = calculateSpaceLocalStorage();
-
-// вырезаем из строки token пользователя
-const token = window.location.hash.split("=")[1].split("&")[0];
-// количество загружаемых постов
-let count = 5;
-// номер поста с которого нужно загрузить переданное количество (count)
-let offset = 0;
-
-// добавление элементов при скроле
-// https://doka.guide/js/intersection-observer/
-// с помощью конструктора создаём Intersection Observer
-// на вход принимает
-const observer = new IntersectionObserver(entries => {
-  // entries — список объектов с информацией о пересечении.
-  entries.forEach((entry) => {
-    // isIntersecting — булево значение. true если есть пересечение элемента и наблюдаемой области.
-    if (entry.isIntersecting) {
-      // убрать элемент из списка наблюдаемых
-      observer.unobserve(entry.target);
-
-      fetchPosts();
-    }
+const callbackFunc = (result) => {
+  result.response.items.forEach((item) => {
+    posts.push(item);
   })
-});
+  renderPosts(result.response.items);
+  setLocalStoragePosts(posts);
+};
 
-// подсчет размера занимаемых данных
-const caltulateSizeItemsInLocalStorage = () => {
-  let total = 0
+const getPosts = (offset) => {
+  const script = document.createElement("SCRIPT");
+  script.src = `https://api.vk.com/method/wall.get?owner_id=-120075923&domain=thememeblog&offset=${offset}&count=${count}&filter=all&access_token=2914c1c32914c1c32914c1c30d2a0143a8229142914c1c34de7a3b7b2d6996882e55c7b&v=5.131&callback=callbackFunc`;
+//   script.src = VK.Api.call('wall.get', {
+//     owner_id: -120075923,
+//     domain: 'thememeblog',
+//     count: count,
+//     offset: offset,
+//     access_token: '2914c1c32914c1c32914c1c30d2a0143a8229142914c1c34de7a3b7b2d6996882e55c7b',
+//     v: 5.131
+//   })
+  document.getElementsByTagName("head")[0].appendChild(script);
+};
 
-  // перебираем все ключи в localstorage и считаем длину
-  for (let i in localStorage) {
-      if (!localStorage.hasOwnProperty(i)) continue;
+const createPost = () => {
+  const postTemplate = document.querySelector("#post-template").content;
+  const post = postTemplate.querySelector(".post").cloneNode(true);
 
-      total += localStorage[i].length * 2;
-  };
+  return post;
+};
 
-  console.log(`Размер содержимого localStorage: ${total} килобайт`)
-  console.log(`Ориентировочный размер localStorage: ${maxSpaceLocalStorage} килобайт`)
-}
+const addPost = ({ attachments, text, likes, reposts, views }) => {
+  const post = createPost();
 
-// установка данных в локальное хранилище
-const setItemsInLocalStorage = (array) => {
+  post.querySelector(".text").textContent = text;
+
+  if (attachments.length > 0) {
+    if (attachments[0].type === "photo") {
+      post.querySelector(".image").src = attachments[0].photo.sizes.find(
+        (size) => size.type === "q"
+      ).url;
+      post.querySelector(".image").alt = attachments[0].photo.text;
+    }
+  }
+
+  post.querySelector(".likes").textContent = likes.count;
+  post.querySelector(".reposts").textContent = reposts.count;
+  post.querySelector(".views").textContent = views.count;
+
+  document.querySelector(".posts").append(post);
+};
+
+const renderPosts = (data) => {
+  data.forEach((post) => {
+    addPost(post);
+  });
+};
+
+const setLocalStoragePosts = (posts) => {
   try {
-    // если элементы в localstorage уже есть
-    if (localStorage.getItem('data')) {
-      // получаем массив из localstorage
-      const data = JSON.parse(localStorage.getItem('data'));
-
-      // перезаписываем старый массив на развернутый старый и развернутый новый, объединённый массив
-      localStorage.setItem('data', JSON.stringify([...data, ...array]));
-
-      caltulateSizeItemsInLocalStorage();
-    } else {
-      localStorage.setItem('data', JSON.stringify(array));
-
-      caltulateSizeItemsInLocalStorage();
-    }
+    localStorage.setItem("posts", JSON.stringify(posts));
+    console.log(`Занято ${(JSON.stringify(posts).length / 1000000).toFixed(1)} Мб из ${maxSize} Мб`);
   } catch {
-    // если появилась ошибка при установке новых данных
-    const data = JSON.parse(localStorage.getItem('data'));
-
-    // перезаписываем имеющейся массив, отрезав от него первые 10% длины
-    localStorage.setItem('data', JSON.stringify(data.slice(Math.floor(data.length / 10), data.length)));
-
-    caltulateSizeItemsInLocalStorage();
+    posts = posts.slice(count);
+    setLocalStoragePosts(posts);
   }
+};
 
-}
-
-const fetchPosts = () =>
-  // https://dev.vk.com/ru/method/wall.get
-  VK.Api.call('wall.get', {
-    owner_id: -120075923, // id сообщества VK
-    domain: 'thememeblog',
-    count: count, 
-    offset: offset,
-    access_token: token,
-    v: 5.131
-    }, (res) => {
-      setItemsInLocalStorage(res.response.items);
-
-      offset += count;
-
-      res.response.items.forEach(item => addItem(item));
-
-      observer.observe(document.querySelector('.item:last-child'));
-    }
-  );
-
-// создание нового элемента
-const createItem = (data) => {
-  const item = document.createElement('li');
-  item.classList.add('item');
-
-  const date = document.createElement('span');
-  date.classList.add('date');
-  dateData = new Date(data.date * 1000);
-  date.textContent = `${dateData.toLocaleDateString()} ${dateData.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-
-  // в li элемент добавляем span с датой
-  item.append(date)
-
-  if (data.attachments[0].photo) {
-    const img = document.createElement('img');
-    img.classList.add('img');
-    img.src = data.attachments[0].photo.sizes[3].url;
-
-    item.append(img);
-  }
-
-  const text = document.createElement('p');
-  text.classList.add('text');
-  text.textContent = data.text;
-
-  item.append(text);
-
-  return item
-}
-
-// добавление элемента на страницу
-const addItem = (item) => {
-  container.append(createItem(item));
-}
-
-// начальная функция, проверяющая наличия данных в localStorage
-const setItems = () => {
-  if (localStorage.getItem('data')) {
-    const data = JSON.parse(localStorage.getItem('data'));
-
-    data.forEach(item => addItem(item));
-
-    observer.observe(document.querySelector('.item:last-child'));
+const renderWidget = () => {
+  if (localStorage.getItem("posts")) {
+    posts = JSON.parse(localStorage.getItem("posts"));
+    renderPosts(posts);
+    console.log(`Занято ${(JSON.stringify(posts).length / 1000000).toFixed(1)} Мб из ${maxSize} Мб`);
   } else {
-    // если localstorage пуст, делаем запрос на получение
-    fetchPosts();
+    getPosts(0);
+    console.log(`Занято ${(JSON.stringify(posts).length / 1000000)} Мб из ${maxSize} Мб`);
+  }
+};
+
+const trySetItem = (testData, step) => {
+  try {
+    localStorage.setItem("test", testData);
+    testData+=step;
+    trySetItem(testData, step);
+  } catch {
+    localStorage.removeItem("test");
+    if (localStorage.getItem("posts")) {
+      maxSize = ((testData.length + localStorage.getItem("posts").length) / 1000000).toFixed(1);
+    } else {
+      maxSize = testData.length / 1000000;
+    }
   }
 }
 
-setItems();
+const countMaxLocalStorageSize = () => {
+  let testData = "";
+  for (let i = 0; i < 100000; i++) {
+    testData+="aaaaaaaa";
+  }
+  const step = testData;
+  
+  trySetItem(testData, step);
+}
+
+countMaxLocalStorageSize();
+renderWidget();
+
+widget.addEventListener("scroll", () => {
+  if (widget.scrollHeight - widget.scrollTop < 550) {
+    getPosts(posts.length);
+  }
+});
